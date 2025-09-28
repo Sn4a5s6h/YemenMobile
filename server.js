@@ -10,18 +10,19 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.static('public'));
 
-// خادم Socket.io بسيط لبث الفيديو
 let broadcasterSocket = null;
 
 io.on('connection', socket => {
-  console.log('مستخدم متصل:', socket.id);
+  console.log('📡 مستخدم متصل:', socket.id);
 
-  socket.on('broadcaster', roomID => {
+  // المذيع يدخل دائمًا غرفة 3461
+  socket.on('broadcaster', () => {
     broadcasterSocket = socket;
-    console.log('Broadcaster started in room:', roomID);
+    console.log('🎥 Broadcaster بدأ البث في الغرفة 3461');
   });
 
-  socket.on('watcher', watcherId => {
+  // مشاهد جديد
+  socket.on('watcher', ({ watcherId }) => {
     if (broadcasterSocket) {
       broadcasterSocket.emit('watcher', { watcherId });
     } else {
@@ -29,23 +30,29 @@ io.on('connection', socket => {
     }
   });
 
+  // عرض (من المذيع → للمشاهد)
   socket.on('offer', ({ watcherId, sdp }) => {
     io.to(watcherId).emit('offer', { from: socket.id, sdp });
   });
 
+  // رد (من المشاهد → للمذيع)
   socket.on('answer', ({ from, sdp }) => {
-    io.to(from).emit('answer', { from: socket.id, sdp });
+    if (broadcasterSocket) {
+      broadcasterSocket.emit('answer', { from, sdp });
+    }
   });
 
+  // مرشحات ICE
   socket.on('candidate', ({ targetId, candidate }) => {
     io.to(targetId).emit('candidate', { from: socket.id, candidate });
   });
 
   socket.on('disconnect', () => {
-    console.log('مستخدم خرج:', socket.id);
+    console.log('❌ مستخدم خرج:', socket.id);
     if (socket === broadcasterSocket) {
       io.emit('broadcaster-left', {});
       broadcasterSocket = null;
+      console.log('⚠️ المذيع خرج من البث');
     }
   });
 });
