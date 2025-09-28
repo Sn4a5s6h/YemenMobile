@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Live audio broadcast with admin control",
   "main": "server.js",
+  "type": "module",       // ← أضف هذا السطر
   "scripts": {
     "start": "node server.js"
   },
