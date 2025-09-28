@@ -1,49 +1,44 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Admin Control</title>
+<title>Broadcaster — Audio Only</title>
+<style>
+body { margin:0; background:#fff; }
+</style>
 </head>
 <body>
-<h2>صفحة التحكم</h2>
-<h3>طلبات الانضمام:</h3>
-<ul id="pending"></ul>
-<h3>المصرح لهم:</h3>
-<ul id="authorized"></ul>
-
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket = io();
-socket.emit('admin_join');
+(async function(){
+  const socket = io();
+  const localStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  socket.emit('broadcaster'); // إعلام السيرفر بأننا المذيع
 
-const pendingEl = document.getElementById('pending');
-const authEl = document.getElementById('authorized');
+  const pcs = new Map();
 
-socket.on('pending_list', list => {
-  pendingEl.innerHTML = '';
-  list.forEach(v => {
-    const li = document.createElement('li');
-    li.textContent = v.userAgent + ' | ' + v.timeZone;
-    const approveBtn = document.createElement('button');
-    approveBtn.textContent = '✅ قبول';
-    approveBtn.onclick = () => socket.emit('approve', v.id);
-    const rejectBtn = document.createElement('button');
-    rejectBtn.textContent = '❌ رفض';
-    rejectBtn.onclick = () => socket.emit('reject', v.id);
-    li.appendChild(approveBtn);
-    li.appendChild(rejectBtn);
-    pendingEl.appendChild(li);
+  socket.on('watcher', async watcherId => {
+    const pc = new RTCPeerConnection();
+    pcs.set(watcherId, pc);
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    pc.onicecandidate = e => { if(e.candidate) socket.emit('candidate', { targetId: watcherId, candidate:e.candidate }); }
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('offer', { targetId: watcherId, sdp: pc.localDescription });
   });
-});
 
-socket.on('authorized_list', list => {
-  authEl.innerHTML = '';
-  list.forEach(v => {
-    const li = document.createElement('li');
-    li.textContent = v.userAgent + ' | ' + v.timeZone;
-    authEl.appendChild(li);
+  socket.on('answer', ({ from, sdp }) => {
+    const pc = pcs.get(from);
+    if(pc) pc.setRemoteDescription(new RTCSessionDescription(sdp));
   });
-});
+
+  socket.on('candidate', ({ from, candidate }) => {
+    const pc = pcs.get(from);
+    if(pc) pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+  });
+
+})();
 </script>
 </body>
 </html>
