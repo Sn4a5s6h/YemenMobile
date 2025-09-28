@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Peer 3461</title>
+  <style>
+    body { margin:0; background:#fff; font-family:Arial; text-align:center; }
+    audio { display:none; }
+  </style>
+</head>
+<body>
+  <h3>قناة الصوت 3461</h3>
+  <p>صفحة بيضاء — إرسال واستقبال صوت</p>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (async function(){
+    const socket = io();
+    const pcMap = new Map();
+    let localStream;
+
+    // 1. افتح الميك
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(err) {
+      alert("لا يمكن الوصول إلى الميكروفون: " + err.message);
+      return;
+    }
+
+    // 2. انضم للقناة
+    socket.emit('join', { role: 'peer', ua: navigator.userAgent });
+
+    // 3. لو دخل مستخدم جديد → أعمل له Offer
+    socket.on('new-peer', async ({ id }) => {
+      if (id === socket.id) return;
+      const pc = createPeer(id, true);
+      pcMap.set(id, pc);
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('signal', { to: id, type: 'offer', payload: { sdp: pc.localDescription } });
+    });
+
+    // 4. استقبل إشارات من الآخرين
+    socket.on('signal', async ({ from, type, payload }) => {
+      let pc = pcMap.get(from);
+      if (!pc) {
+        pc = createPeer(from, false);
+        pcMap.set(from, pc);
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      }
+
+      if (type === 'offer') {
+        await pc.setRemoteDescription(payload.sdp);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { to: from, type: 'answer', payload: { sdp: pc.localDescription } });
+      } else if (type === 'answer') {
+        await pc.setRemoteDescription(payload.sdp);
+      } else if (type === 'candidate' && payload.candidate) {
+        try { await pc.addIceCandidate(payload.candidate); } catch(e) { console.error(e); }
+      }
+    });
+
+    // 5. أنشئ PeerConnection
+    function createPeer(remoteId, initiator) {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+      pc.onicecandidate = e => {
+        if (e.candidate) socket.emit('signal', { to: remoteId, type: 'candidate', payload: { candidate: e.candidate } });
+      };
+
+      pc.ontrack = ev => {
+        const audio = document.createElement('audio');
+        audio.srcObject = ev.streams[0];
+        audio.autoplay = true;
+        document.body.appendChild(audio);
+      };
+
+      return pc;
+    }
+  })();
+  </script>
+</body>
+</html>
