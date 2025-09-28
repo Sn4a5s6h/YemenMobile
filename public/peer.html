@@ -1,54 +1,104 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Peer Viewer</title>
+<meta charset="utf-8">
+<title>Live Audio Viewer</title>
+<style>
+  body {
+    margin:0;
+    background:#121212;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+    color:#fff;
+    font-family: Arial, sans-serif;
+  }
+
+  h1 {
+    margin-bottom:20px;
+    font-size:24px;
+  }
+
+  canvas {
+    background:#222;
+    border-radius:8px;
+    width:90%;
+    max-width:600px;
+    height:150px;
+  }
+
+  audio {
+    display:none;
+  }
+</style>
 </head>
-<body style="margin:0; padding:0; background:#fff;"></body>
+<body>
+<h1>🎧 البث المباشر — الصوت فقط</h1>
+<canvas id="vuMeter"></canvas>
+<audio id="remoteAudio" autoplay></audio>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (async function(){
   const socket = io();
+  const audioEl = document.getElementById('remoteAudio');
+  const pc = new RTCPeerConnection();
 
-  // معلومات الجهاز + ip (بسيطة) ترسل للـ admin
-  const info = {
-    userAgent: navigator.userAgent,
-    language: navigator.language,
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  pc.ontrack = e => {
+    audioEl.srcObject = e.streams[0];
+
+    // إعداد VU Meter
+    const audioCtx = new AudioContext();
+    const source = audioCtx.createMediaStreamSource(e.streams[0]);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+
+    const canvas = document.getElementById('vuMeter');
+    const ctx = canvas.getContext('2d');
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    function draw() {
+      requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+      ctx.fillStyle = "#222";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const barWidth = (canvas.width / bufferLength) * 2.5;
+      let x = 0;
+      for(let i=0; i<bufferLength; i++){
+        const barHeight = dataArray[i]/2;
+        ctx.fillStyle = `rgb(${barHeight+100},50,200)`;
+        ctx.fillRect(x, canvas.height-barHeight, barWidth, barHeight);
+        x += barWidth + 1;
+      }
+    }
+    draw();
   };
 
-  socket.emit('request_join', info);
+  pc.onicecandidate = e => { 
+    if(e.candidate) socket.emit('candidate', { targetId:'broadcaster', candidate:e.candidate }); 
+  }
 
-  socket.on('approved', async () => {
-    const pc = new RTCPeerConnection();
-    let localStream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  // الانضمام للبث
+  socket.emit('watcher', { device:navigator.userAgent, os:navigator.platform });
 
-    pc.ontrack = event => {
-      const audioEl = document.createElement('audio');
-      audioEl.srcObject = event.streams[0];
-      audioEl.autoplay = true;
-      document.body.appendChild(audioEl);
-    };
-
-    pc.onicecandidate = e => {
-      if(e.candidate) socket.emit('candidate', { to:'broadcaster', candidate:e.candidate });
-    };
-
-    // طلب اتصال بالبث
-    socket.on('offer', async ({ from, sdp }) => {
-      await pc.setRemoteDescription(sdp);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit('answer', { to: from, sdp: pc.localDescription });
-    });
+  socket.on('offer', async ({ from, sdp }) => {
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('answer', { targetId: from, sdp: pc.localDescription });
   });
 
-  socket.on('rejected', () => {
-    alert('تم رفض طلبك للانضمام');
+  socket.on('candidate', ({ from, candidate }) => { 
+    if(candidate) pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error); 
   });
 
+  socket.on('no-broadcaster', () => alert('❌ لا يوجد بث حالياً'));
 })();
 </script>
+</body>
 </html>
