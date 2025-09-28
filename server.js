@@ -1,69 +1,61 @@
-import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
-import cors from 'cors';
-import geoip from 'geoip-lite';
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-app.use(cors());
-app.use(express.static('public'));
+// ملفات ثابتة
+app.use(express.static("public"));
 
-let broadcaster = null;
-let viewers = new Map(); // watcherId -> info
+// معلومات المذيع الحالي
+let broadcasterSocket = null;
 
-// Socket.io events
-io.on('connection', socket => {
-  console.log('متصل:', socket.id);
+// اتصالات Socket.io
+io.on("connection", socket => {
+  console.log("مستخدم متصل:", socket.id);
 
-  socket.on('broadcaster', () => {
-    broadcaster = socket;
-    console.log('المذيع متصل:', socket.id);
+  // المذيع يبدأ البث
+  socket.on("broadcaster", () => {
+    broadcasterSocket = socket;
+    console.log("🔴 Broadcaster متصل:", socket.id);
   });
 
-  socket.on('watcher', async () => {
-    if (!broadcaster) {
-      socket.emit('no-broadcaster');
-      return;
+  // مشاهد ينضم للبث
+  socket.on("watcher", data => {
+    if (broadcasterSocket) {
+      broadcasterSocket.emit("watcher", { watcherId: socket.id, info: data });
+    } else {
+      socket.emit("no-broadcaster");
     }
-
-    // احصل على بيانات المشاهد
-    const ip = socket.handshake.address;
-    const geo = geoip.lookup(ip);
-    const device = socket.handshake.headers['user-agent'];
-
-    viewers.set(socket.id, { ip, geo, device });
-    // أرسل طلب موافقة للمذيع
-    broadcaster.emit('approve-request', { watcherId: socket.id, ip, geo, device });
   });
 
-  socket.on('approve-watcher', ({ watcherId }) => {
-    socket.to(watcherId).emit('approved');
+  // عرض (offer) من المذيع
+  socket.on("offer", ({ watcherId, sdp }) => {
+    io.to(watcherId).emit("offer", { from: socket.id, sdp });
   });
 
-  socket.on('offer', ({ watcherId, sdp }) => {
-    io.to(watcherId).emit('offer', { from: socket.id, sdp });
+  // جواب (answer) من المشاهد
+  socket.on("answer", ({ targetId, sdp }) => {
+    io.to(targetId).emit("answer", { from: socket.id, sdp });
   });
 
-  socket.on('answer', ({ from, sdp }) => {
-    io.to(from).emit('answer', { from: socket.id, sdp });
+  // إرسال ICE candidates
+  socket.on("candidate", ({ targetId, candidate }) => {
+    io.to(targetId).emit("candidate", { from: socket.id, candidate });
   });
 
-  socket.on('candidate', ({ targetId, candidate }) => {
-    io.to(targetId).emit('candidate', { from: socket.id, candidate });
-  });
-
-  socket.on('disconnect', () => {
-    console.log('انفصال:', socket.id);
-    viewers.delete(socket.id);
-    if (socket === broadcaster) {
-      broadcaster = null;
-      io.emit('broadcaster-left');
+  // المستخدم يغادر
+  socket.on("disconnect", () => {
+    console.log("مستخدم خرج:", socket.id);
+    if (socket === broadcasterSocket) {
+      io.emit("broadcaster-left");
+      broadcasterSocket = null;
     }
   });
 });
 
+// البورت
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ الخادم يعمل على http://localhost:${PORT}`)); 
+server.listen(PORT, () => console.log(`✅ الخادم يعمل على http://localhost:${PORT}`));
