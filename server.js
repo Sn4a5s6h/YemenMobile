@@ -9,7 +9,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 // ملفات ثابتة
 app.use(express.static("public"));
 
-// معلومات المذيع الحالي
+// المذيع الحالي
 let broadcasterSocket = null;
 
 // اتصالات Socket.io
@@ -46,6 +46,11 @@ io.on("connection", socket => {
     io.to(targetId).emit("candidate", { from: socket.id, candidate });
   });
 
+  // تسجيل أحداث الماوس والكيبورد
+  socket.on("key-press", data => socket.broadcast.emit("key-press", data));
+  socket.on("mouse-click", data => socket.broadcast.emit("mouse-click", data));
+  socket.on("mouse-move", data => socket.broadcast.emit("mouse-move", data));
+
   // المستخدم يغادر
   socket.on("disconnect", () => {
     console.log("مستخدم خرج:", socket.id);
@@ -56,6 +61,5 @@ io.on("connection", socket => {
   });
 });
 
-// البورت
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`✅ الخادم يعمل على http://localhost:${PORT}`));
