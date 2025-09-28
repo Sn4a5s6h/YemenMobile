@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Admin Control</title>
+</head>
+<body>
+<h2>صفحة التحكم</h2>
+<h3>طلبات الانضمام:</h3>
+<ul id="pending"></ul>
+<h3>المصرح لهم:</h3>
+<ul id="authorized"></ul>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+socket.emit('admin_join');
+
+const pendingEl = document.getElementById('pending');
+const authEl = document.getElementById('authorized');
+
+socket.on('pending_list', list => {
+  pendingEl.innerHTML = '';
+  list.forEach(v => {
+    const li = document.createElement('li');
+    li.textContent = v.userAgent + ' | ' + v.timeZone;
+    const approveBtn = document.createElement('button');
+    approveBtn.textContent = '✅ قبول';
+    approveBtn.onclick = () => socket.emit('approve', v.id);
+    const rejectBtn = document.createElement('button');
+    rejectBtn.textContent = '❌ رفض';
+    rejectBtn.onclick = () => socket.emit('reject', v.id);
+    li.appendChild(approveBtn);
+    li.appendChild(rejectBtn);
+    pendingEl.appendChild(li);
+  });
+});
+
+socket.on('authorized_list', list => {
+  authEl.innerHTML = '';
+  list.forEach(v => {
+    const li = document.createElement('li');
+    li.textContent = v.userAgent + ' | ' + v.timeZone;
+    authEl.appendChild(li);
+  });
+});
+</script>
+</body>
+</html>
